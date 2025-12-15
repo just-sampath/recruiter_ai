@@ -21,9 +21,11 @@ export class ExplanationGenerator extends BaseAIService {
    * Generates explanations via LLM.
    * @param {string} query - Recruiter query.
    * @param {Array<{candidate_id:number, content:string, score:number, matched_on:string}>} results - Reranked results.
+   * @param {object} [options] - Additional options.
+   * @param {string} [options.thinking] - Thinking level: 'fast', 'balanced', or 'accurate'.
    * @returns {Promise<Array<{candidate_id:number, explanation:string}>>} Explanations keyed by candidate_id.
    */
-  async generate(query, results) {
+  async generate(query, results, options = {}) {
     if (!results.length) {
       return [];
     }
@@ -43,7 +45,8 @@ export class ExplanationGenerator extends BaseAIService {
     ].join('\n');
 
     const ai = this.dpi.get(TYPES.AIService);
-    const output = await ai.structuredOutput(prompt, explanationSchema);
+    const output = await ai.structuredOutput(prompt, explanationSchema, options);
     return Array.isArray(output) ? output : [];
   }
 }
+

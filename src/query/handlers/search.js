@@ -25,6 +25,7 @@ export class SearchHandler extends BaseAIService {
    * @param {object} [options] - Search options.
    * @param {number} [options.jobId] - Optional job ID for context-based reranking.
    * @param {number} [options.topK] - Number of results to return.
+   * @param {string} [options.thinking] - Thinking level: 'fast', 'balanced', or 'accurate'.
    * @returns {Promise<object>} Search response with results and metadata.
    */
   async search(query, options = {}) {
@@ -34,13 +35,15 @@ export class SearchHandler extends BaseAIService {
       this.config.get('search.maxTopK')
     );
     const jobId = options.jobId || options.job_id || null;
+    const thinking = options.thinking || this.config.get('thinking.default') || 'balanced';
+    const llmOptions = { thinking };
 
-    logger.info({ query, jobId, topK }, 'Search: starting');
+    logger.info({ query, jobId, topK, thinking }, 'Search: starting');
 
     try {
       // Step 1: Extract intent and filters via LLM
       const extractor = this.dpi.get(TYPES.QueryExtractor);
-      const extraction = await extractor.extract(query);
+      const extraction = await extractor.extract(query, llmOptions);
 
       const strategy = (extraction.search_strategy || SEARCH_STRATEGIES.HYBRID).toLowerCase();
       const filters = extraction.extracted_filters || {};
@@ -57,10 +60,10 @@ export class SearchHandler extends BaseAIService {
       if (strategy === SEARCH_STRATEGIES.STRUCTURED) {
         results = await this._structuredSearch(semanticQuery, filters, jobId, topK);
       } else if (strategy === SEARCH_STRATEGIES.SEMANTIC) {
-        results = await this._semanticSearch(semanticQuery, topK);
+        results = await this._semanticSearch(semanticQuery, topK, jobId, llmOptions);
         hasEmbeddedExplanations = true;
       } else {
-        results = await this._hybridSearch(semanticQuery, filters, topK);
+        results = await this._hybridSearch(semanticQuery, filters, topK, jobId, llmOptions);
         hasEmbeddedExplanations = true;
       }
 
@@ -78,7 +81,8 @@ export class SearchHandler extends BaseAIService {
           query,
           filters,
           strategyExplanation,
-          results
+          results,
+          llmOptions
         );
       }
 
@@ -396,11 +400,13 @@ export class SearchHandler extends BaseAIService {
    * @param {string} semanticQuery - Query for embedding.
    * @param {object} filters - Extracted filters for Qdrant payload filter.
    * @param {number} topK - Result limit.
+   * @param {number|null} jobId - Optional job ID to filter by applicants.
+   * @param {object} [options] - LLM options including thinking level.
    * @returns {Promise<Array>} Search results.
    */
-  async _hybridSearch(semanticQuery, filters, topK) {
+  async _hybridSearch(semanticQuery, filters, topK, jobId = null, options = {}) {
     const logger = this.logger;
-    logger.info({ semanticQuery, filters }, 'HybridSearch: starting');
+    logger.info({ semanticQuery, filters, jobId }, 'HybridSearch: starting');
 
     try {
       const vectorManager = this.dpi.get(TYPES.VectorDBManager);
@@ -413,11 +419,11 @@ export class SearchHandler extends BaseAIService {
         sparseService.embed(semanticQuery),
       ]);
 
-      // Build Qdrant filter
-      const qdrantFilter = this._buildQdrantFilter(filters);
+      // Build Qdrant filter with optional job applicant filter
+      const qdrantFilter = await this._buildQdrantFilterWithJob(filters, jobId);
       const fetchLimit = Math.max(topK * this.config.get('search.rerankFetchMultiplier'), 80);
 
-      logger.debug({ qdrantFilter, fetchLimit }, 'HybridSearch: executing vector search');
+      logger.warn({ qdrantFilter, fetchLimit }, 'HybridSearch: executing vector search');
 
       const hits = await vectorManager.hybridSearch({
         dense,
@@ -437,7 +443,7 @@ export class SearchHandler extends BaseAIService {
 
       // Use LLM reranker which returns candidates with explanations
       const llmReranker = this.dpi.get(TYPES.LLMReranker);
-      const reranked = await llmReranker.rerank(semanticQuery, docs, topK);
+      const reranked = await llmReranker.rerank(semanticQuery, docs, topK, options);
 
       logger.info({ rerankedCount: reranked.length }, 'HybridSearch: LLM reranking complete');
 
@@ -505,6 +511,51 @@ export class SearchHandler extends BaseAIService {
     return must.length ? { must } : null;
   }
 
+  /**
+   * Builds Qdrant filter with optional job applicant restriction.
+   * @param {object} filters - Extracted filters.
+   * @param {number|null} jobId - Optional job ID to filter by applicants.
+   * @returns {Promise<object|null>} Qdrant filter object.
+   */
+  async _buildQdrantFilterWithJob(filters = {}, jobId = null) {
+    const baseFilter = this._buildQdrantFilter(filters);
+
+    if (!jobId) {
+      return baseFilter;
+    }
+
+    // Get candidate IDs who applied to this job
+    const candidateIds = await this._getCandidateIdsForJob(jobId);
+
+    if (!candidateIds.length) {
+      this.logger.warn({ jobId }, 'No candidates found for job, returning empty filter');
+      // Return a filter that matches nothing (candidate_id = -1 which won't exist)
+      return { must: [{ key: 'candidate_id', match: { value: -1 } }] };
+    }
+
+    this.logger.info({ jobId, candidateCount: candidateIds.length }, 'Filtering by job applicants');
+
+    const candidateFilter = { key: 'candidate_id', match: { any: candidateIds } };
+
+    if (baseFilter?.must?.length) {
+      return { must: [...baseFilter.must, candidateFilter] };
+    }
+
+    return { must: [candidateFilter] };
+  }
+
+  /**
+   * Fetches candidate IDs who applied to a specific job.
+   * @param {number} jobId - Job ID.
+   * @returns {Promise<number[]>} Array of candidate IDs.
+   */
+  async _getCandidateIdsForJob(jobId) {
+    const rows = await this.db.execute(
+      sql`SELECT DISTINCT candidate_id FROM ${jobApplications} WHERE job_id = ${jobId}`
+    );
+    return rows.map((r) => Number(r.candidate_id));
+  }
+
   // ─────────────────────────────────────────────────────────────────────────────
   // LEVEL 2: SEMANTIC SEARCH
   // ─────────────────────────────────────────────────────────────────────────────
@@ -513,11 +564,13 @@ export class SearchHandler extends BaseAIService {
    * Level 2: Pure semantic/vector search without filters.
    * @param {string} semanticQuery - Query for embedding.
    * @param {number} topK - Result limit.
+   * @param {number|null} jobId - Optional job ID to filter by applicants.
+   * @param {object} [options] - LLM options including thinking level.
    * @returns {Promise<Array>} Search results.
    */
-  async _semanticSearch(semanticQuery, topK) {
+  async _semanticSearch(semanticQuery, topK, jobId = null, options = {}) {
     const logger = this.logger;
-    logger.info({ semanticQuery }, 'SemanticSearch: starting');
+    logger.info({ semanticQuery, jobId }, 'SemanticSearch: starting');
 
     try {
       const vectorManager = this.dpi.get(TYPES.VectorDBManager);
@@ -535,13 +588,15 @@ export class SearchHandler extends BaseAIService {
         80
       );
 
-      logger.debug({ fetchLimit }, 'SemanticSearch: executing vector search');
+      // Build filter from job applicants if jobId provided
+      const qdrantFilter = await this._buildQdrantFilterWithJob({}, jobId);
 
-      // No filter for semantic search
+      logger.debug({ fetchLimit, hasJobFilter: !!jobId }, 'SemanticSearch: executing vector search');
+
       const hits = await vectorManager.hybridSearch({
         dense,
         sparse,
-        filter: null,
+        filter: qdrantFilter,
         limit: fetchLimit,
       });
 
@@ -556,7 +611,7 @@ export class SearchHandler extends BaseAIService {
 
       // Use LLM reranker which returns candidates with explanations
       const llmReranker = this.dpi.get(TYPES.LLMReranker);
-      const reranked = await llmReranker.rerank(semanticQuery, docs, topK);
+      const reranked = await llmReranker.rerank(semanticQuery, docs, topK, options);
 
       logger.info({ rerankedCount: reranked.length }, 'SemanticSearch: LLM reranking complete');
 
@@ -640,9 +695,10 @@ export class SearchHandler extends BaseAIService {
    * @param {object} filters - Extracted filters.
    * @param {string} strategyExplanation - Strategy explanation from LLM.
    * @param {Array} results - Search results.
+   * @param {object} [options] - LLM options including thinking level.
    * @returns {Promise<Map<number, string>>} Map of candidate_id to explanation.
    */
-  async _generateExplanations(type, query, filters, strategyExplanation, results) {
+  async _generateExplanations(type, query, filters, strategyExplanation, results, options = {}) {
     const map = new Map();
     if (!results.length) return map;
 
@@ -661,7 +717,7 @@ export class SearchHandler extends BaseAIService {
         score: r.match_score,
         matched_on: r.matched_on,
       }));
-      const explanations = await generator.generate(query, payload);
+      const explanations = await generator.generate(query, payload, options);
       explanations.forEach((e) => map.set(Number(e.candidate_id), e.explanation));
     } catch (err) {
       this.logger.warn({ err }, 'Explanation generation failed, using deterministic fallback');

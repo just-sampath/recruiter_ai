@@ -112,16 +112,18 @@ export class QueryExtractor extends BaseAIService {
   /**
    * Extracts query intent via LLM with structured output.
    * @param {string} query - Natural language recruiter query.
+   * @param {object} [options] - Additional options.
+   * @param {string} [options.thinking] - Thinking level: 'fast', 'balanced', or 'accurate'.
    * @returns {Promise<{search_strategy: string, strategy_explanation: string, semantic_query: string, extracted_filters: object}>}
    */
-  async extract(query) {
+  async extract(query, options = {}) {
     const logger = this.logger;
     logger.info({ query }, 'QueryExtractor: extracting intent');
 
     try {
       const prompt = this._buildPrompt(query);
       const ai = this.dpi.get(TYPES.AIService);
-      const raw = await ai.structuredOutput(prompt, EXTRACTION_SCHEMA);
+      const raw = await ai.structuredOutput(prompt, EXTRACTION_SCHEMA, options);
 
       logger.debug({ raw }, 'QueryExtractor: raw LLM response');
 

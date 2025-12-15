@@ -41,9 +41,11 @@ export class LLMReranker extends BaseAIService {
    * @param {string} query - Search query.
    * @param {Array<{id:string, content:string, metadata:object}>} docs - Retrieved documents with full payload.
    * @param {number} topK - Number of top candidates to return.
+   * @param {object} [options] - Additional options.
+   * @param {string} [options.thinking] - Thinking level: 'fast', 'balanced', or 'accurate'.
    * @returns {Promise<Array<{candidate_id:number, match_score:number, explanation:string}>>} Reranked candidates with explanations.
    */
-  async rerank(query, docs, topK) {
+  async rerank(query, docs, topK, options = {}) {
     const logger = this.logger;
     logger.info({ query, docCount: docs.length, topK }, 'LLMReranker: starting');
 
@@ -56,7 +58,7 @@ export class LLMReranker extends BaseAIService {
       const ai = this.dpi.get(TYPES.AIService);
       const startTime = Date.now();
 
-      const result = await ai.structuredOutput(prompt, RERANK_SCHEMA);
+      const result = await ai.structuredOutput(prompt, RERANK_SCHEMA, options);
       const latencyMs = Date.now() - startTime;
 
       logger.info({ resultCount: result.candidates?.length, latencyMs }, 'LLMReranker: complete');
@@ -101,19 +103,19 @@ export class LLMReranker extends BaseAIService {
     const candidates = Array.from(candidateMap.values());
 
     const candidateBlocks = candidates
-      .map((c, idx) => {
+      .map((c) => {
         const docTexts = c.documents
           .map((d) => `[${d.doc_type}]: ${d.text.slice(0, 2000)}`)
           .join('\n\n');
 
-        return `--- CANDIDATE ${idx + 1} (ID: ${c.candidate_id}) ---
+        return `--- CANDIDATE ID: ${c.candidate_id} ---
 Location: ${c.metadata?.current_location || 'N/A'}
 Experience: ${c.metadata?.total_experience_years || 'N/A'} years
 Skills: ${(c.metadata?.skills || []).join(', ') || 'N/A'}
 
 DOCUMENTS:
 ${docTexts}
---- END CANDIDATE ${idx + 1} ---`;
+--- END CANDIDATE ID: ${c.candidate_id} ---`;
       })
       .join('\n\n');
 

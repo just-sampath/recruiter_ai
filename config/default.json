@@ -69,6 +69,19 @@
       "recruiter_comment": 0.9
     }
   },
+  "thinking": {
+    "default": "accurate",
+    "budgets": {
+      "fast": 1024,
+      "balanced": 8192,
+      "accurate": 24576
+    },
+    "levels": {
+      "fast": "low",
+      "balanced": "low",
+      "accurate": "high"
+    }
+  },
   "auth": {
     "jwtSecret": "replace-me",
     "tokenExpiresIn": "1d",

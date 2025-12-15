@@ -14,8 +14,9 @@ export async function searchCandidates(c) {
   if (!parsed.success) {
     throw new ValidationError(parsed.error.message);
   }
-  const { query, job_id, top_k } = parsed.data;
+  const { query, job_id, top_k, mode: thinking } = parsed.data;
   const handler = DPI.get(TYPES.SearchHandler);
-  const results = await handler.search(query, { jobId: job_id, topK: top_k });
+  const results = await handler.search(query, { jobId: job_id, topK: top_k, thinking });
   return c.json(results);
 }
+
