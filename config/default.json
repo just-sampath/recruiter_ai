@@ -1,0 +1,77 @@
+{
+  "server": {
+    "port": 3000
+  },
+  "database": {
+    "url": "postgres://postgres:pass@localhost:5432/recruiter_ai"
+  },
+  "redis": {
+    "host": "localhost",
+    "port": 6379,
+    "username": null,
+    "password": null,
+    "tls": false
+  },
+  "qdrant": {
+    "url": "http://localhost:6333",
+    "apiKey": "",
+    "collection": "candidates",
+    "dense": {
+      "name": "text-dense",
+      "size": 1536,
+      "distance": "Cosine"
+    },
+    "sparse": {
+      "name": "text-sparse"
+    }
+  },
+  "llm": {
+    "provider": "gemini",
+    "model": "gemini-2.5-pro",
+    "apiKey": ""
+  },
+  "embedding": {
+    "provider": "gemini",
+    "model": "gemini-embedding-001",
+    "dimensions": 1536,
+    "apiKey": "",
+    "timeoutMs": 10000
+  },
+  "sparseEmbedding": {
+    "modelPath": "models/models--Qdrant--bm42-all-minilm-l6-v2-attentions/snapshots/7dab1a1d5be08609ce5df41bb651348d9e5e077a/model.onnx",
+    "tokenizerPath": "models/models--Qdrant--bm42-all-minilm-l6-v2-attentions/snapshots/7dab1a1d5be08609ce5df41bb651348d9e5e077a/tokenizer.json",
+    "stopwordsPath": "models/models--Qdrant--bm42-all-minilm-l6-v2-attentions/snapshots/7dab1a1d5be08609ce5df41bb651348d9e5e077a/stopwords.txt"
+  },
+  "vectordb": {
+    "provider": "qdrant",
+    "collection": "candidate_documents"
+  },
+  "reranker": {
+    "provider": "cohere",
+    "model": "rerank-v3.5",
+    "apiKey": ""
+  },
+  "queue": {
+    "name": "process-documents",
+    "concurrency": 5,
+    "batchSize": 25,
+    "maxRetries": 3
+  },
+  "search": {
+    "defaultTopK": 3,
+    "maxTopK": 20,
+    "rerankFetchMultiplier": 25,
+    "explanationType": "llm",
+    "sourceWeights": {
+      "resume": 1,
+      "interview_transcript": 1.2,
+      "one_way_transcript": 1,
+      "recruiter_comment": 0.9
+    }
+  },
+  "auth": {
+    "jwtSecret": "replace-me",
+    "tokenExpiresIn": "1d",
+    "bcryptRounds": 10
+  }
+}
