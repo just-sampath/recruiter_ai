@@ -61,7 +61,7 @@
     "defaultTopK": 3,
     "maxTopK": 20,
     "rerankFetchMultiplier": 25,
-    "explanationType": "llm",
+    "explanationType": "deterministic",
     "sourceWeights": {
       "resume": 1,
       "interview_transcript": 1.2,
