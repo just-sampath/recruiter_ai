@@ -1,0 +1,12 @@
+{
+    "database": {
+        "url": "postgres://postgres:postgres@postgres:5432/recruiter_ai"
+    },
+    "redis": {
+        "host": "redis",
+        "port": 6379
+    },
+    "qdrant": {
+        "url": "http://qdrant:6333"
+    }
+}

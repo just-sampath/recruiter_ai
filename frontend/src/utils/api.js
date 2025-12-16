@@ -1,6 +1,20 @@
 // API configuration and helpers
 
-const DEFAULT_API_URL = 'http://localhost:3000/api';
+// Auto-detect API URL: use env var if set (Docker), else detect from current port
+const getDefaultApiUrl = () => {
+    // Vite injects VITE_API_URL at build time for Docker
+    if (typeof import.meta !== 'undefined' && import.meta.env?.VITE_API_URL) {
+        return import.meta.env.VITE_API_URL;
+    }
+    // Fallback: if running on port 5175 (Docker frontend), use Docker backend port
+    if (typeof window !== 'undefined' && window.location.port === '5175') {
+        return 'http://localhost:3005/api';
+    }
+    // Default for local development
+    return 'http://localhost:3000/api';
+};
+
+const DEFAULT_API_URL = getDefaultApiUrl();
 
 export function getApiUrl() {
     return localStorage.getItem('apiUrl') || DEFAULT_API_URL;

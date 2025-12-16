@@ -1,0 +1,36 @@
+# Dependencies
+node_modules
+frontend/node_modules
+
+# Build outputs
+dist
+frontend/dist
+
+# Git
+.git
+.gitignore
+
+# IDE
+.vscode
+.idea
+
+# Logs
+*.log
+
+# Environment files (use docker-compose environment)
+.env
+
+# Database dumps
+*.rdb
+dump.rdb
+
+# Data files
+data/
+
+# Documentation
+*.md
+!README.md
+
+# Misc
+.DS_Store
+Thumbs.db
