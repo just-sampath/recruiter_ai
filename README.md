@@ -178,7 +178,7 @@ The system classifies every query into one of three search strategies:
 | Level | Strategy | When Used | Example Query |
 |-------|----------|-----------|---------------|
 | **0** | Structured | Pure SQL filters on columns | "Immediate joiners in Delhi" |
-| **1** | Hybrid | SQL filters + vector search | "Backend engineers in Bangalore who mention Kubernetes" |
+| **1** | Hybrid | Qdrant filters + vector search | "Backend engineers in Bangalore who mention Kubernetes" |
 | **2** | Semantic | Pure vector search on text | "Candidates who demonstrate strong ownership" |
 
 ### Query Extraction Pipeline
@@ -199,25 +199,6 @@ search_strategy semantic_query  extracted_filters
 (0/1/2)         (for embedding)  {locations, skills,
                                   experience, salary,
                                   notice_period, ...}
-```
-
-### Extracted Filter Schema
-
-The LLM extracts the following filterable fields:
-
-```javascript
-{
-  locations: ["Delhi", "Bangalore"],     // current_location
-  skills: ["React", "Python"],           // via candidate_skills join
-  experience_min: 3,                     // total_experience_years >=
-  experience_max: 8,                     // total_experience_years <=
-  notice_period_max: 30,                 // notice_period_days <=
-  can_join_immediately: true,            // boolean flag
-  expected_salary_min: 15,               // expected_salary_lpa >=
-  expected_salary_max: 30,               // expected_salary_lpa <=
-  preferred_work_type: "Remote",         // Remote | Onsite | Hybrid
-  current_company: "Google"              // partial match
-}
 ```
 
 ### Skill Normalization
@@ -417,10 +398,9 @@ The `indexing_queue` table tracks:
 ### Limitations
 
 1. **Cold start latency**: First query loads models and warms caches
-2. **No incremental updates**: Document updates require full re-embedding
-3. **Limited skill taxonomy**: Skills are normalized but not hierarchical (no "Python includes Django")
-4. **Single Qdrant collection**: All doc types share one collection (payload filtering handles separation)
-5. **No query caching**: Repeated queries re-execute full pipeline
+2. **No incremental updates**: Document updates require full re-embedding (Point upserts are idempotent)
+3. **Single Qdrant collection**: All doc types share one collection (payload filtering handles separation)
+4. **No query caching**: Repeated queries re-execute full pipeline
 
 ### Future Improvements
 
