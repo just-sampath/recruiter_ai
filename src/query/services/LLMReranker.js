@@ -109,9 +109,15 @@ export class LLMReranker extends BaseAIService {
           .join('\n\n');
 
         return `--- CANDIDATE ID: ${c.candidate_id} ---
-Location: ${c.metadata?.current_location || 'N/A'}
+Current Title: ${c.metadata?.current_title || 'N/A'}
+Current Company: ${c.metadata?.current_company || 'N/A'}
+Current Location: ${c.metadata?.current_location || 'N/A'}
 Experience: ${c.metadata?.total_experience_years || 'N/A'} years
-Skills: ${(c.metadata?.skills || []).join(', ') || 'N/A'}
+Added Skills: ${(c.metadata?.skills || []).join(', ') || 'N/A'}
+Notice Period (days): ${c.metadata?.notice_period_days || 'N/A'}
+Can Join Immediately: ${c.metadata?.can_join_immediately || 'N/A'}
+Expected Salary (LPA): ${c.metadata?.expected_salary_lpa || 'N/A'}
+Preferred Work Type: ${c.metadata?.preferred_work_type || 'N/A'}
 
 DOCUMENTS:
 ${docTexts}
@@ -130,7 +136,7 @@ ${candidateBlocks}
 
 INSTRUCTIONS:
 1. Read each candidate's documents (resume, transcripts, comments) carefully
-2. Evaluate semantic relevance to the search query - not just keyword matches
+2. Evaluate strict relevance to the search query - not just keyword matches
 3. Consider skills, experience, and qualitative aspects mentioned in documents
 4. Assign relevance_score from 0.0 (irrelevant) to 1.0 (perfect match)
 5. Write a concise explanation (1-2 sentences) for each candidate
