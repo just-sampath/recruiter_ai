@@ -8,8 +8,14 @@ export const logger = pino({
   transport:
     process.env.NODE_ENV === 'development'
       ? {
-          target: 'pino-pretty',
-          options: { translateTime: true },
-        }
+        target: 'pino-pretty',
+        options: {
+          translateTime: 'SYS:HH:MM:ss',
+          ignore: 'pid,hostname',
+          messageFormat: '{msg}',
+          colorize: true,
+          singleLine: true,
+        },
+      }
       : undefined,
 });
