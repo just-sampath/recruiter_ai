@@ -28,7 +28,7 @@ export function ImportProvider({ children }) {
             const baseUrl = getApiUrl();
             const token = getAuthToken();
 
-            const response = await fetch(`${baseUrl}/import`, {
+            const response = await fetch(`${baseUrl}/import/xlsx`, {
                 method: 'POST',
                 headers: {
                     'Authorization': `Bearer ${token}`,

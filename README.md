@@ -440,7 +440,7 @@ The `indexing_queue` table tracks:
 
 6. Import sample data:
    ```bash
-   curl -X POST http://localhost:3000/api/import \
+   curl -X POST http://localhost:3000/api/import/xlsx \
      -F "file=@data/sample.xlsx" \
      -H "Authorization: Bearer <admin_token>"
    ```
