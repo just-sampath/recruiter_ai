@@ -43,8 +43,7 @@
     "stopwordsPath": "models/models--Qdrant--bm42-all-minilm-l6-v2-attentions/snapshots/7dab1a1d5be08609ce5df41bb651348d9e5e077a/stopwords.txt"
   },
   "vectordb": {
-    "provider": "qdrant",
-    "collection": "candidate_documents"
+    "provider": "qdrant"
   },
   "reranker": {
     "provider": "cohere",
@@ -66,7 +65,8 @@
       "resume": 1,
       "interview_transcript": 1.2,
       "one_way_transcript": 1,
-      "recruiter_comment": 0.9
+      "recruiter_comment": 0.9,
+      "screening_answer": 1
     }
   },
   "thinking": {
@@ -86,5 +86,8 @@
     "jwtSecret": "replace-me",
     "tokenExpiresIn": "1d",
     "bcryptRounds": 10
+  },
+  "internal": {
+    "initToken": ""
   }
 }

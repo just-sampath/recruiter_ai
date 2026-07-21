@@ -1,5 +1,4 @@
-import { integer, pgTable, timestamp, varchar } from 'drizzle-orm/pg-core';
-import { index } from 'drizzle-orm/pg-core';
+import { index, integer, pgTable, timestamp, uniqueIndex, varchar } from 'drizzle-orm/pg-core';
 import { candidates } from '../candidates/schema.js';
 import { jobs } from '../jobs/schema.js';
 
@@ -20,5 +19,9 @@ export const jobApplications = pgTable(
   (table) => ({
     idxCandidate: index('idx_applications_candidate').on(table.candidate_id),
     idxJob: index('idx_applications_job').on(table.job_id),
+    uniqCandidateJob: uniqueIndex('uniq_application_candidate_job').on(
+      table.candidate_id,
+      table.job_id
+    ),
   })
 );

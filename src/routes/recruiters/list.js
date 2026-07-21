@@ -1,5 +1,6 @@
 import DPI from 'js-dep-injector';
 import { TYPES } from '../../core/types.js';
+import { toPublicRecruiterList } from '../../utils/publicDto.js';
 
 /**
  * Lists recruiters (superadmin only).
@@ -7,5 +8,5 @@ import { TYPES } from '../../core/types.js';
  */
 export async function listRecruiters(c) {
   const recruiters = await DPI.get(TYPES.RecruiterManager).list();
-  return c.json(recruiters);
+  return c.json(toPublicRecruiterList(recruiters));
 }

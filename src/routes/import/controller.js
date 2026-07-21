@@ -4,14 +4,13 @@ import * as XLSX from 'xlsx';
 import { jobApplications } from '../../core/db/applications/schema.js';
 import { candidateResumes } from '../../core/db/candidate_resumes/schema.js';
 import { candidateSkills } from '../../core/db/candidate_skills/schema.js';
-import { candidates as candidateTable } from '../../core/db/candidates/schema.js';
 import { interviews } from '../../core/db/interviews/schema.js';
 import { jobs } from '../../core/db/jobs/schema.js';
 import { oneWayInterviews } from '../../core/db/one_way_interviews/schema.js';
 import { screeningAnswers } from '../../core/db/screening_answers/schema.js';
 import { screeningQuestions } from '../../core/db/screening_questions/schema.js';
 import { TYPES } from '../../core/types.js';
-import { DOC_TYPES, INDEX_EVENT_TYPES } from '../../utils/constants.js';
+import { DOC_TYPES } from '../../utils/constants.js';
 import { ValidationError } from '../../utils/errors.js';
 import { importFormSchema } from './validator.js';
 
@@ -33,6 +32,39 @@ const SHEETS = {
 };
 
 const DEFAULT_PASSWORD = 'Temp@1234';
+
+function createIndexingStats() {
+  return {
+    enqueued: 0,
+    skipped_dedupe: 0,
+    by_type: {
+      [DOC_TYPES.RESUME]: 0,
+      [DOC_TYPES.INTERVIEW_TRANSCRIPT]: 0,
+      [DOC_TYPES.ONE_WAY_TRANSCRIPT]: 0,
+      [DOC_TYPES.RECRUITER_COMMENT]: 0,
+      [DOC_TYPES.SCREENING_ANSWER]: 0,
+    },
+  };
+}
+
+/**
+ * Record orchestrator enqueue result into import indexing stats.
+ * @param {ReturnType<typeof createIndexingStats>} stats
+ * @param {string} docType
+ * @param {{ enqueued?: boolean, skipped?: boolean, reason?: string }|null|undefined} result
+ */
+function recordIndexResult(stats, docType, result) {
+  if (!result) return;
+  if (result.enqueued) {
+    stats.enqueued += 1;
+    if (stats.by_type[docType] === undefined) {
+      stats.by_type[docType] = 0;
+    }
+    stats.by_type[docType] += 1;
+  } else if (result.skipped && result.reason === 'dedupe_scope') {
+    stats.skipped_dedupe += 1;
+  }
+}
 
 async function maybeTruncateTables(db, truncate, logger) {
   if (!truncate) return;
@@ -85,9 +117,19 @@ export async function importXlsx(c) {
     logger?.info({ sheets: workbook.SheetNames, firstRows }, 'Import: parsed workbook');
     const summary = {};
     const errors = [];
+    const indexingStats = createIndexingStats();
 
     const db = DPI.get(TYPES.Database);
+    const orchestrator = DPI.get(TYPES.IndexingOrchestrator);
+
+    // Truncate PG first, then recreate Qdrant (fail closed if recreate fails).
     await maybeTruncateTables(db, truncate, logger);
+    if (truncate) {
+      await orchestrator.recreateCollection();
+      logger?.info('Import: recreated Qdrant collection after truncate');
+    }
+
+    const scope = orchestrator.createDedupeScope();
     const jobManager = DPI.get(TYPES.JobManager);
     const candidateManager = DPI.get(TYPES.CandidateManager);
     const skillManager = DPI.get(TYPES.SkillManager);
@@ -180,6 +222,7 @@ export async function importXlsx(c) {
     logger?.info('Import: processing candidates');
     const candidateSheet = getSheet(SHEETS.CANDIDATES);
     summary.candidates = 0;
+    summary.candidates_updated = 0;
     for (const row of candidateSheet) {
       const sheetCandidateId = row.candidate_id;
       try {
@@ -215,6 +258,29 @@ export async function importXlsx(c) {
             expected_salary_lpa: row.expected_salary_lpa,
           });
           summary.candidates += 1;
+        } else {
+          // Update existing candidate profile fields (not email uniqueness).
+          candidate = await candidateManager.update(candidate.candidate_id, {
+            first_name: row.first_name,
+            last_name: row.last_name,
+            phone: row.phone,
+            current_location: row.current_location,
+            preferred_work_type: row.preferred_work_type,
+            total_experience_years: row.total_experience_years,
+            current_company: row.current_company,
+            current_title: row.current_title,
+            notice_period_days: row.notice_period_days,
+            can_join_immediately: row.can_join_immediately,
+            current_salary_lpa: row.current_salary_lpa,
+            expected_salary_lpa: row.expected_salary_lpa,
+          });
+          summary.candidates_updated += 1;
+          // If update + resume exists → re-enqueue latest resume (payload refresh).
+          const resumeResult = await orchestrator.enqueueLatestResumeForCandidate(
+            candidate.candidate_id,
+            { scope }
+          );
+          recordIndexResult(indexingStats, DOC_TYPES.RESUME, resumeResult);
         }
         candidatesByEmail.set(candidate.email, candidate.candidate_id);
         candidateIdMap.set(sheetCandidateId ?? candidate.candidate_id, candidate.candidate_id);
@@ -227,7 +293,6 @@ export async function importXlsx(c) {
     logger?.info('Import: processing resumes');
     const resumeSheet = getSheet(SHEETS.RESUMES);
     summary.resumes = 0;
-    const enqueuedResumes = new Set();
     for (const row of resumeSheet) {
       const candidateId =
         candidateIdMap.get(row.candidate_id) ||
@@ -242,11 +307,17 @@ export async function importXlsx(c) {
           errors.push({ sheet: SHEETS.RESUMES, row, error: 'resume_text required' });
           continue;
         }
-        await db
+        const [resume] = await db
           .insert(candidateResumes)
-          .values({ candidate_id: candidateId, resume_text: row.resume_text });
+          .values({ candidate_id: candidateId, resume_text: row.resume_text })
+          .returning();
         summary.resumes += 1;
-        enqueuedResumes.add(candidateId);
+        const result = await orchestrator.enqueueResume({
+          resumeId: resume.resume_id,
+          candidateId,
+          scope,
+        });
+        recordIndexResult(indexingStats, DOC_TYPES.RESUME, result);
       } catch (err) {
         logger?.error({ err, row }, 'Import: resume row failed');
         errors.push({ sheet: SHEETS.RESUMES, row, error: err.message });
@@ -349,18 +420,13 @@ export async function importXlsx(c) {
         }
         const sheetAppId = row.application_id || application.application_id;
         applicationsMap.set(sheetAppId, application.application_id);
-        const resume = await candidateManager.getLatestResume(candidateId);
-        if (resume && !enqueuedResumes.has(candidateId)) {
-          await DPI.get(TYPES.ProcessDocumentsQueue).enqueue({
-            event_type: INDEX_EVENT_TYPES.UPSERT,
-            doc_type: DOC_TYPES.RESUME,
-            source_id: resume.resume_id,
-            candidate_id: candidateId,
-            application_id: application.application_id,
-            job_id: jobId,
-          });
-          enqueuedResumes.add(candidateId);
-        }
+        // Always try latest resume; scope dedupes if resume already enqueued this run.
+        const result = await orchestrator.enqueueLatestResumeForCandidate(candidateId, {
+          applicationId: application.application_id,
+          jobId,
+          scope,
+        });
+        recordIndexResult(indexingStats, DOC_TYPES.RESUME, result);
       } catch (err) {
         logger?.error({ err, row }, 'Import: application row failed');
         errors.push({ sheet: SHEETS.APPLICATIONS, row, error: err.message });
@@ -400,12 +466,32 @@ export async function importXlsx(c) {
           });
           continue;
         }
-        await db.insert(screeningAnswers).values({
-          application_id: appId,
-          question_id: questionId,
-          answer_text: row.answer_text,
-        });
+        const [answer] = await db
+          .insert(screeningAnswers)
+          .values({
+            application_id: appId,
+            question_id: questionId,
+            answer_text: row.answer_text,
+          })
+          .returning();
         summary.screening_answers += 1;
+        const application = await applicationManager.getById(appId);
+        if (!application) {
+          errors.push({
+            sheet: SHEETS.SCREENING_ANSWERS,
+            row,
+            error: `application_id ${appId} not found for indexing`,
+          });
+          continue;
+        }
+        const result = await orchestrator.enqueueScreeningAnswer({
+          answerId: answer.answer_id,
+          candidateId: application.candidate_id,
+          applicationId: application.application_id,
+          jobId: application.job_id,
+          scope,
+        });
+        recordIndexResult(indexingStats, DOC_TYPES.SCREENING_ANSWER, result);
       } catch (err) {
         logger?.error({ err, row }, 'Import: screening answer row failed');
         errors.push({ sheet: SHEETS.SCREENING_ANSWERS, row, error: err.message });
@@ -478,14 +564,14 @@ export async function importXlsx(c) {
           row.answer_text
         );
         summary.one_way_transcripts += 1;
-        await DPI.get(TYPES.ProcessDocumentsQueue).enqueue({
-          event_type: INDEX_EVENT_TYPES.UPSERT,
-          doc_type: DOC_TYPES.ONE_WAY_TRANSCRIPT,
-          source_id: transcript.transcript_id,
-          candidate_id: application.candidate_id,
-          application_id: application.application_id,
-          job_id: application.job_id,
+        const result = await orchestrator.enqueueOneWayTranscript({
+          transcriptId: transcript.transcript_id,
+          candidateId: application.candidate_id,
+          applicationId: application.application_id,
+          jobId: application.job_id,
+          scope,
         });
+        recordIndexResult(indexingStats, DOC_TYPES.ONE_WAY_TRANSCRIPT, result);
       } catch (err) {
         logger?.error({ err, row }, 'Import: one-way transcript row failed');
         errors.push({ sheet: SHEETS.ONE_WAY_TRANSCRIPTS, row, error: err.message });
@@ -509,14 +595,14 @@ export async function importXlsx(c) {
           comment_text: row.comment_text,
         });
         summary.recruiter_comments += 1;
-        await DPI.get(TYPES.ProcessDocumentsQueue).enqueue({
-          event_type: INDEX_EVENT_TYPES.UPSERT,
-          doc_type: DOC_TYPES.RECRUITER_COMMENT,
-          source_id: comment.comment_id,
-          candidate_id: application.candidate_id,
-          application_id: application.application_id,
-          job_id: application.job_id,
+        const result = await orchestrator.enqueueRecruiterComment({
+          commentId: comment.comment_id,
+          candidateId: application.candidate_id,
+          applicationId: application.application_id,
+          jobId: application.job_id,
+          scope,
         });
+        recordIndexResult(indexingStats, DOC_TYPES.RECRUITER_COMMENT, result);
       } catch (err) {
         logger?.error({ err, row }, 'Import: recruiter comment row failed');
         errors.push({ sheet: SHEETS.RECRUITER_COMMENTS, row, error: err.message });
@@ -533,6 +619,10 @@ export async function importXlsx(c) {
           errors.push({ sheet: SHEETS.INTERVIEWS, row, error: 'application_id required' });
           continue;
         }
+        if (!row.round_name) {
+          errors.push({ sheet: SHEETS.INTERVIEWS, row, error: 'round_name required' });
+          continue;
+        }
         const application = await applicationManager.getById(mappedAppId);
         if (!application) {
           errors.push({
@@ -542,12 +632,22 @@ export async function importXlsx(c) {
           });
           continue;
         }
+        let interviewAt;
+        if (row.interview_at) {
+          interviewAt = new Date(row.interview_at);
+        } else {
+          interviewAt = new Date();
+          logger?.warn(
+            { row, application_id: mappedAppId },
+            'Import: missing interview_at; defaulting to now'
+          );
+        }
         const [created] = await db
           .insert(interviews)
           .values({
             application_id: mappedAppId,
             round_name: row.round_name,
-            interview_at: row.interview_at ? new Date(row.interview_at) : undefined,
+            interview_at: interviewAt,
           })
           .returning();
         if (created) {
@@ -582,14 +682,14 @@ export async function importXlsx(c) {
         }
         const transcript = await interviewManager.addTranscript(interviewId, row.transcript_text);
         summary.interview_transcripts += 1;
-        await DPI.get(TYPES.ProcessDocumentsQueue).enqueue({
-          event_type: INDEX_EVENT_TYPES.UPSERT,
-          doc_type: DOC_TYPES.INTERVIEW_TRANSCRIPT,
-          source_id: transcript.transcript_id,
-          candidate_id: application.candidate_id,
-          application_id: application.application_id,
-          job_id: application.job_id,
+        const result = await orchestrator.enqueueInterviewTranscript({
+          transcriptId: transcript.transcript_id,
+          candidateId: application.candidate_id,
+          applicationId: application.application_id,
+          jobId: application.job_id,
+          scope,
         });
+        recordIndexResult(indexingStats, DOC_TYPES.INTERVIEW_TRANSCRIPT, result);
       } catch (err) {
         logger?.error({ err, row }, 'Import: interview transcript row failed');
         errors.push({ sheet: SHEETS.INTERVIEW_TRANSCRIPTS, row, error: err.message });
@@ -621,8 +721,8 @@ export async function importXlsx(c) {
       }
     }
 
-    logger?.info({ summary, errors }, 'Import completed');
-    return c.json({ imported: summary, indexing: 'in_progress', errors });
+    logger?.info({ summary, indexing: indexingStats, errors }, 'Import completed');
+    return c.json({ imported: summary, indexing: indexingStats, errors });
   } catch (err) {
     const logger = c.get('logger');
     logger?.error({ err }, 'Import XLSX failed');

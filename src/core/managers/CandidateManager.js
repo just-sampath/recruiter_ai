@@ -1,6 +1,5 @@
 import { desc, eq } from 'drizzle-orm';
 import { hashPassword } from '../../utils/auth.js';
-import { DOC_TYPES, INDEX_EVENT_TYPES } from '../../utils/constants.js';
 import { candidateResumes } from '../db/candidate_resumes/schema.js';
 import { candidates } from '../db/candidates/schema.js';
 import { TYPES } from '../types.js';
@@ -59,13 +58,9 @@ export class CandidateManager extends CoreBaseManager {
         .values({ candidate_id: created.candidate_id, resume_text: data.resume_text })
         .returning();
 
-      await this.dpi.get(TYPES.ProcessDocumentsQueue).enqueue({
-        event_type: INDEX_EVENT_TYPES.UPSERT,
-        doc_type: DOC_TYPES.RESUME,
-        source_id: resume.resume_id,
-        candidate_id: created.candidate_id,
-        application_id: null,
-        job_id: null,
+      await this.dpi.get(TYPES.IndexingOrchestrator).enqueueResume({
+        resumeId: resume.resume_id,
+        candidateId: created.candidate_id,
       });
     }
 
@@ -101,13 +96,9 @@ export class CandidateManager extends CoreBaseManager {
         .insert(candidateResumes)
         .values({ candidate_id: updated.candidate_id, resume_text: resumeText })
         .returning();
-      await this.dpi.get(TYPES.ProcessDocumentsQueue).enqueue({
-        event_type: INDEX_EVENT_TYPES.UPSERT,
-        doc_type: DOC_TYPES.RESUME,
-        source_id: resume.resume_id,
-        candidate_id: updated.candidate_id,
-        application_id: null,
-        job_id: null,
+      await this.dpi.get(TYPES.IndexingOrchestrator).enqueueResume({
+        resumeId: resume.resume_id,
+        candidateId: updated.candidate_id,
       });
     }
     return updated;

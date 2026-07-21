@@ -1,4 +1,5 @@
 import { TYPES } from '../../core/types.js';
+import { normalizeRelevance } from '../scoring/ScoreNormalizer.js';
 import { BaseAIService } from './base/BaseAIService.js';
 
 /**
@@ -38,6 +39,8 @@ const RERANK_SCHEMA = {
 export class LLMReranker extends BaseAIService {
   /**
    * Reranks documents using LLM semantic understanding.
+   * Drops hallucinated candidate_ids not present in the input docs.
+   * If none remain, falls back to retrieval order.
    * @param {string} query - Search query.
    * @param {Array<{id:string, content:string, metadata:object}>} docs - Retrieved documents with full payload.
    * @param {number} topK - Number of top candidates to return.
@@ -53,6 +56,9 @@ export class LLMReranker extends BaseAIService {
       return [];
     }
 
+    const allowedOrder = this._allowedCandidateOrder(docs);
+    const allowed = new Set(allowedOrder);
+
     try {
       const prompt = this._buildPrompt(query, docs, topK);
       const ai = this.dpi.get(TYPES.AIService);
@@ -61,17 +67,70 @@ export class LLMReranker extends BaseAIService {
       const result = await ai.structuredOutput(prompt, RERANK_SCHEMA, options);
       const latencyMs = Date.now() - startTime;
 
-      logger.info({ resultCount: result.candidates?.length, latencyMs }, 'LLMReranker: complete');
+      const filtered = [];
+      const seen = new Set();
+      for (const c of result.candidates || []) {
+        const candidateId = Number(c.candidate_id);
+        if (!allowed.has(candidateId) || seen.has(candidateId)) continue;
+        seen.add(candidateId);
+        filtered.push({
+          candidate_id: candidateId,
+          match_score: normalizeRelevance(c.relevance_score),
+          explanation: c.explanation || '',
+        });
+        if (filtered.length >= topK) break;
+      }
 
-      return (result.candidates || []).slice(0, topK).map((c) => ({
-        candidate_id: Number(c.candidate_id),
-        match_score: Math.min(1, Math.max(0, Number(c.relevance_score) || 0)),
-        explanation: c.explanation || '',
-      }));
+      if (!filtered.length) {
+        logger.warn(
+          { llmCount: result.candidates?.length, allowedCount: allowedOrder.length },
+          'LLMReranker: no valid candidate_ids after filter, falling back to retrieval order'
+        );
+        return this._fallbackByRetrievalOrder(allowedOrder, topK);
+      }
+
+      logger.info(
+        { resultCount: filtered.length, latencyMs, dropped: (result.candidates?.length || 0) - filtered.length },
+        'LLMReranker: complete'
+      );
+
+      return filtered;
     } catch (err) {
       logger.error({ err }, 'LLMReranker: failed');
       throw err;
     }
+  }
+
+  /**
+   * Unique candidate IDs in first-seen retrieval order.
+   * @param {Array} docs
+   * @returns {number[]}
+   */
+  _allowedCandidateOrder(docs) {
+    const order = [];
+    const seen = new Set();
+    for (const doc of docs) {
+      const cid = Number(doc.metadata?.candidate_id);
+      if (!Number.isFinite(cid) || seen.has(cid)) continue;
+      seen.add(cid);
+      order.push(cid);
+    }
+    return order;
+  }
+
+  /**
+   * Fallback ranking when LLM returns no IDs from the allowed set.
+   * @param {number[]} allowedOrder
+   * @param {number} topK
+   * @returns {Array<{candidate_id:number, match_score:number, explanation:string}>}
+   */
+  _fallbackByRetrievalOrder(allowedOrder, topK) {
+    const n = allowedOrder.length;
+    return allowedOrder.slice(0, topK).map((candidate_id, i) => ({
+      candidate_id,
+      match_score: normalizeRelevance(n > 0 ? (n - i) / n : 0),
+      explanation: 'Ranked by retrieval order (LLM returned no valid candidate IDs)',
+    }));
   }
 
   /**

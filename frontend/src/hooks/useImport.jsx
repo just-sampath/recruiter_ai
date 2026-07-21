@@ -1,5 +1,5 @@
 import { createContext, useContext, useState, useCallback } from 'react';
-import { getApiUrl, getAuthToken } from '../utils/api';
+import { getApiUrl, getAuthToken, getErrorMessage } from '../utils/api';
 
 const ImportContext = createContext(null);
 
@@ -36,10 +36,10 @@ export function ImportProvider({ children }) {
                 body: formData,
             });
 
-            const data = await response.json();
+            const data = await response.json().catch(() => null);
 
             if (!response.ok) {
-                throw new Error(data.message || `HTTP ${response.status}`);
+                throw new Error(getErrorMessage(data, response.status));
             }
 
             setResult(data);

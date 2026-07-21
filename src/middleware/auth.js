@@ -1,6 +1,8 @@
+import { timingSafeEqual } from 'node:crypto';
+import config from 'config';
 import { verifyToken } from '../utils/auth.js';
 import { USER_ROLES } from '../utils/constants.js';
-import { AuthError, ForbiddenError } from '../utils/errors.js';
+import { AppError, AuthError, ForbiddenError } from '../utils/errors.js';
 
 /**
  * Authentication middleware for Hono routes.
@@ -26,6 +28,28 @@ export function requireAuth(allowedRoles = []) {
     c.set('user', payload);
     await next();
   };
+}
+
+/**
+ * Require a shared internal init token (Bearer or X-Internal-Token).
+ * Empty configured token disables the endpoint with 503.
+ * @type {import('hono').MiddlewareHandler}
+ */
+export async function requireInternalToken(c, next) {
+  const expected = process.env.INTERNAL_INIT_TOKEN || config.get('internal.initToken') || '';
+  if (!expected) {
+    throw new AppError('Internal init is disabled', 503, 'INTERNAL_DISABLED');
+  }
+  const auth = c.req.header('Authorization') || '';
+  const bearer = auth.startsWith('Bearer ') ? auth.slice(7) : '';
+  const headerToken = c.req.header('X-Internal-Token') || '';
+  const provided = bearer || headerToken;
+  const a = Buffer.from(provided);
+  const b = Buffer.from(expected);
+  if (a.length !== b.length || !timingSafeEqual(a, b)) {
+    throw new AuthError('Invalid internal token');
+  }
+  await next();
 }
 
 /**

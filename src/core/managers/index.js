@@ -3,6 +3,7 @@ import { TYPES } from '../types.js';
 
 import { ApplicationManager } from './ApplicationManager.js';
 import { CandidateManager } from './CandidateManager.js';
+import { IndexingOrchestrator } from './IndexingOrchestrator.js';
 import { IndexingQueueManager } from './IndexingQueueManager.js';
 import { InterviewManager } from './InterviewManager.js';
 import { JobManager } from './JobManager.js';
@@ -22,6 +23,7 @@ DPI.factory(TYPES.SkillManager, () => new SkillManager());
 DPI.factory(TYPES.IndexingQueueManager, () => new IndexingQueueManager());
 DPI.factory(TYPES.VectorDBManager, () => new VectorDBManager());
 DPI.factory(TYPES.OneWayInterviewManager, () => new OneWayInterviewManager());
+DPI.factory(TYPES.IndexingOrchestrator, () => new IndexingOrchestrator());
 
 export {
   CandidateManager,
@@ -34,4 +36,5 @@ export {
   IndexingQueueManager,
   VectorDBManager,
   OneWayInterviewManager,
+  IndexingOrchestrator,
 };

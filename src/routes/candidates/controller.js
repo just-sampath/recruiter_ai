@@ -1,6 +1,7 @@
 import DPI from 'js-dep-injector';
 import { TYPES } from '../../core/types.js';
 import { NotFoundError, ValidationError } from '../../utils/errors.js';
+import { toPublicCandidate } from '../../utils/publicDto.js';
 import { candidateUpdateSchema } from './validator.js';
 
 /**
@@ -14,7 +15,7 @@ export async function getCandidateById(c) {
   if (!candidate) {
     throw new NotFoundError('Candidate not found');
   }
-  return c.json(candidate);
+  return c.json(toPublicCandidate(candidate));
 }
 
 /**
@@ -33,5 +34,5 @@ export async function updateCandidate(c) {
   if (!updated) {
     throw new NotFoundError('Candidate not found');
   }
-  return c.json(updated);
+  return c.json(toPublicCandidate(updated));
 }

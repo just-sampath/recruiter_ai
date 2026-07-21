@@ -34,14 +34,15 @@ export function AuthProvider({ children }) {
         if (response.token) {
             setAuthToken(response.token);
             const payload = JSON.parse(atob(response.token.split('.')[1]));
-            setUser({
+            const userData = {
                 id: payload.sub,
                 email: payload.email,
                 role: payload.role,
-            });
-            return true;
+            };
+            setUser(userData);
+            return userData;
         }
-        return false;
+        return null;
     };
 
     const logout = () => {
@@ -49,10 +50,14 @@ export function AuthProvider({ children }) {
         setUser(null);
     };
 
-    const isAdmin = user?.role === 'superadmin' || user?.role === 'admin';
+    const canAccessAdmin =
+        user?.role === 'superadmin' || user?.role === 'recruiter';
+    const isSuperAdmin = user?.role === 'superadmin';
 
     return (
-        <AuthContext.Provider value={{ user, loading, login, logout, isAdmin }}>
+        <AuthContext.Provider
+            value={{ user, loading, login, logout, canAccessAdmin, isSuperAdmin }}
+        >
             {children}
         </AuthContext.Provider>
     );

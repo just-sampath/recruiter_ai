@@ -1,6 +1,7 @@
 import DPI from 'js-dep-injector';
 import { TYPES } from '../../core/types.js';
 import { ValidationError } from '../../utils/errors.js';
+import { toPublicRecruiter } from '../../utils/publicDto.js';
 import { recruiterCreateSchema } from './validator.js';
 
 /**
@@ -15,7 +16,7 @@ export async function createRecruiter(c) {
     throw new ValidationError(parsed.error.message);
   }
   const recruiter = await DPI.get(TYPES.RecruiterManager).create(parsed.data);
-  return c.json(recruiter, 201);
+  return c.json(toPublicRecruiter(recruiter), 201);
 }
 
 /**
@@ -28,7 +29,7 @@ export async function getRecruiter(c) {
   if (!recruiter) {
     throw new ValidationError('Recruiter not found');
   }
-  return c.json(recruiter);
+  return c.json(toPublicRecruiter(recruiter));
 }
 
 /**
@@ -46,7 +47,7 @@ export async function updateRecruiter(c) {
   if (!recruiter) {
     throw new ValidationError('Recruiter not found');
   }
-  return c.json(recruiter);
+  return c.json(toPublicRecruiter(recruiter));
 }
 
 /**

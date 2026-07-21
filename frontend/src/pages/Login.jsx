@@ -7,7 +7,7 @@ export default function Login() {
     const [password, setPassword] = useState('');
     const [error, setError] = useState('');
     const [loading, setLoading] = useState(false);
-    const { login } = useAuth();
+    const { login, logout } = useAuth();
     const navigate = useNavigate();
 
     const handleSubmit = async (e) => {
@@ -16,8 +16,15 @@ export default function Login() {
         setLoading(true);
 
         try {
-            await login(email, password);
-            navigate('/admin');
+            const userData = await login(email, password);
+            const canAccessAdmin =
+                userData?.role === 'superadmin' || userData?.role === 'recruiter';
+            if (canAccessAdmin) {
+                navigate('/admin');
+            } else {
+                setError('Insufficient role');
+                logout();
+            }
         } catch (err) {
             setError(err.message || 'Invalid credentials');
         } finally {

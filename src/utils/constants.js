@@ -3,6 +3,7 @@ export const DOC_TYPES = {
   INTERVIEW_TRANSCRIPT: 'interview_transcript',
   ONE_WAY_TRANSCRIPT: 'one_way_transcript',
   RECRUITER_COMMENT: 'recruiter_comment',
+  SCREENING_ANSWER: 'screening_answer',
 };
 
 export const INDEX_EVENT_TYPES = {

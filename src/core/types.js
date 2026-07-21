@@ -30,6 +30,7 @@ export const TYPES = {
   SkillManager: 'SkillManager',
   IndexingQueueManager: 'IndexingQueueManager',
   VectorDBManager: 'VectorDBManager',
+  IndexingOrchestrator: 'IndexingOrchestrator',
 
   // Queues
   ProcessDocumentsQueue: 'ProcessDocumentsQueue',

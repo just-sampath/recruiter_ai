@@ -49,3 +49,12 @@ export class NotFoundError extends AppError {
     super(message, 404, code);
   }
 }
+
+/**
+ * Service unavailable error (503).
+ */
+export class ServiceUnavailableError extends AppError {
+  constructor(message = 'Service unavailable', code = 'SERVICE_UNAVAILABLE') {
+    super(message, 503, code);
+  }
+}

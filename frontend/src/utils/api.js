@@ -63,12 +63,16 @@ export async function apiFetch(endpoint, options = {}) {
     return response;
 }
 
+export function getErrorMessage(body, status) {
+    return body?.error?.message || body?.message || `HTTP ${status}`;
+}
+
 export async function apiJson(endpoint, options = {}) {
     const response = await apiFetch(endpoint, options);
 
     if (!response.ok) {
-        const error = await response.json().catch(() => ({ message: 'Request failed' }));
-        throw new Error(error.message || `HTTP ${response.status}`);
+        const body = await response.json().catch(() => null);
+        throw new Error(getErrorMessage(body, response.status));
     }
 
     return response.json();

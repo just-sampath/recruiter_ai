@@ -67,6 +67,7 @@ async function bootstrapSchema() {
       current_stage VARCHAR(50) DEFAULT 'Applied',
       source VARCHAR(100)
     );`,
+    // Unique pair index applied in ensureApplicationPairUniqueness (after dedupe).
     `CREATE TABLE IF NOT EXISTS screening_questions (
       question_id INTEGER GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
       question_text TEXT NOT NULL
@@ -143,6 +144,24 @@ async function bootstrapSchema() {
   }
 }
 
+/**
+ * Dedupe duplicate (candidate_id, job_id) rows then enforce unique index.
+ * Keeps the lowest application_id per pair; child FKs cascade on delete.
+ */
+async function ensureApplicationPairUniqueness() {
+  await connection.unsafe(`
+    DELETE FROM job_applications a
+    USING job_applications b
+    WHERE a.candidate_id = b.candidate_id
+      AND a.job_id = b.job_id
+      AND a.application_id > b.application_id
+  `);
+  await connection.unsafe(`
+    CREATE UNIQUE INDEX IF NOT EXISTS uniq_application_candidate_job
+    ON job_applications(candidate_id, job_id)
+  `);
+}
+
 export async function ensureSchema({ closeConnection = true } = {}) {
   try {
     const journalExists = fs.existsSync('drizzle/meta/_journal.json');
@@ -151,6 +170,7 @@ export async function ensureSchema({ closeConnection = true } = {}) {
     } else {
       await bootstrapSchema();
     }
+    await ensureApplicationPairUniqueness();
   } finally {
     if (closeConnection) {
       await connection.end();

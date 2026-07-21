@@ -12,7 +12,7 @@ import Settings from './pages/Settings';
 import AdminLayout from './components/Layout/AdminLayout';
 
 function ProtectedRoute({ children }) {
-  const { user, loading, isAdmin } = useAuth();
+  const { user, loading, canAccessAdmin } = useAuth();
 
   if (loading) {
     return (
@@ -22,7 +22,7 @@ function ProtectedRoute({ children }) {
     );
   }
 
-  if (!user || !isAdmin) {
+  if (!user || !canAccessAdmin) {
     return <Navigate to="/login" replace />;
   }
 
@@ -60,5 +60,3 @@ function App() {
 }
 
 export default App;
-
-

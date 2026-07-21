@@ -1,4 +1,4 @@
-import { eq } from 'drizzle-orm';
+import { and, eq } from 'drizzle-orm';
 import { jobApplications } from '../db/applications/schema.js';
 import { CoreBaseManager } from './base/CoreBaseManager.js';
 
@@ -26,6 +26,23 @@ export class ApplicationManager extends CoreBaseManager {
       .select()
       .from(jobApplications)
       .where(eq(jobApplications.application_id, id))
+      .limit(1);
+    return rows[0] || null;
+  }
+
+  /**
+   * Finds application for a candidate+job pair.
+   * @param {number} candidateId - Candidate ID.
+   * @param {number} jobId - Job ID.
+   * @returns {Promise<object|null>} Application or null.
+   */
+  async getByCandidateAndJob(candidateId, jobId) {
+    const rows = await this.db
+      .select()
+      .from(jobApplications)
+      .where(
+        and(eq(jobApplications.candidate_id, candidateId), eq(jobApplications.job_id, jobId))
+      )
       .limit(1);
     return rows[0] || null;
   }

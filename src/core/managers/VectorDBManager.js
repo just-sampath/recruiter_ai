@@ -14,6 +14,23 @@ export class VectorDBManager extends CoreBaseManager {
   }
 
   /**
+   * Deletes and recreates the vector collection.
+   * @returns {Promise<void>}
+   */
+  async recreateCollection() {
+    await this.dpi.get(TYPES.VectorDBService).recreateCollection();
+  }
+
+  /**
+   * Deletes points matching a filter.
+   * @param {object} filter - Qdrant filter object.
+   * @returns {Promise<void>}
+   */
+  async deleteByFilter(filter) {
+    await this.dpi.get(TYPES.VectorDBService).deleteByFilter(filter);
+  }
+
+  /**
    * Upserts provided points.
    * @param {Array<object>} points - Vector points.
    * @returns {Promise<void>}

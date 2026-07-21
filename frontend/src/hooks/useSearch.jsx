@@ -23,9 +23,10 @@ export function SearchProvider({ children }) {
         setResponse(null);
 
         try {
+            const clampedTopK = Math.max(1, Math.min(20, Number(topK) || 10));
             const payload = {
                 query: query.trim(),
-                top_k: topK,
+                top_k: clampedTopK,
                 mode,
             };
             if (jobId) {

@@ -67,6 +67,29 @@ export class QdrantService extends VectorDB {
   }
 
   /**
+   * Deletes and recreates the collection (dense+sparse + payload indexes).
+   * @returns {Promise<void>}
+   */
+  async recreateCollection() {
+    this._collectionEnsured = false;
+    try {
+      await this.client.deleteCollection(this.collectionName);
+    } catch (e) {
+      // ignore 404 / not found
+    }
+    await this.ensureCollection();
+  }
+
+  /**
+   * Deletes points matching a Qdrant filter.
+   * @param {object} filter - Qdrant filter object.
+   * @returns {Promise<void>}
+   */
+  async deleteByFilter(filter) {
+    await this.client.delete(this.collectionName, { wait: true, filter });
+  }
+
+  /**
    * Upserts points with dense and sparse vectors.
    * @param {Array<{id: string|number, dense?: number[], sparse?: {indices:number[], values:number[]}, payload?: object}>} points
    * @returns {Promise<void>}
@@ -217,6 +240,11 @@ export class QdrantService extends VectorDB {
       { field_name: 'preferred_work_type', field_schema: 'keyword' },
       { field_name: 'current_title', field_schema: 'keyword' },
       { field_name: 'current_company', field_schema: 'keyword' },
+      { field_name: 'doc_type', field_schema: 'keyword' },
+      { field_name: 'source_id', field_schema: 'integer' },
+      { field_name: 'chunk_index', field_schema: 'integer' },
+      { field_name: 'current_location_norm', field_schema: 'keyword' },
+      { field_name: 'current_company_norm', field_schema: 'keyword' },
     ];
     for (const field of fields) {
       try {

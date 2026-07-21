@@ -1,13 +1,26 @@
 import DPI from 'js-dep-injector';
 import { TYPES } from '../../core/types.js';
-import { DOC_TYPES, INDEX_EVENT_TYPES } from '../../utils/constants.js';
 import { NotFoundError, ValidationError } from '../../utils/errors.js';
 import { recruiterCommentSchema } from './validator.js';
 
 /**
- * Candidate applies to a job.
+ * Postgres unique_violation (and drizzle-wrapped forms).
+ * @param {unknown} err
+ * @returns {boolean}
+ */
+function isUniqueViolation(err) {
+  if (!err || typeof err !== 'object') {
+    return false;
+  }
+  const code = /** @type {{ code?: string, cause?: { code?: string } }} */ (err).code;
+  const causeCode = /** @type {{ cause?: { code?: string } }} */ (err).cause?.code;
+  return code === '23505' || causeCode === '23505';
+}
+
+/**
+ * Candidate applies to a job (idempotent on candidate+job pair).
  * @param {import('hono').Context} c - Context.
- * @returns {Promise<Response>} Application record.
+ * @returns {Promise<Response>} Application record (201 created, 200 existing).
  */
 export async function applyToJob(c) {
   const jobId = Number(c.req.param('id'));
@@ -18,26 +31,43 @@ export async function applyToJob(c) {
   if (!user || user.role !== 'candidate') {
     throw new ValidationError('Only candidates can apply');
   }
-  const payload = {
-    job_id: jobId,
-    candidate_id: user.sub,
-    source: 'portal',
-  };
-  const application = await DPI.get(TYPES.ApplicationManager).create(payload);
+  const candidateId = user.sub;
 
-  const resume = await DPI.get(TYPES.CandidateManager).getLatestResume(user.sub);
-  if (resume) {
-    await DPI.get(TYPES.ProcessDocumentsQueue).enqueue({
-      event_type: INDEX_EVENT_TYPES.UPSERT,
-      doc_type: DOC_TYPES.RESUME,
-      source_id: resume.resume_id,
-      candidate_id: user.sub,
-      application_id: application.application_id,
-      job_id: jobId,
-    });
+  const job = await DPI.get(TYPES.JobManager).getById(jobId);
+  if (!job) {
+    throw new NotFoundError('Job not found');
   }
 
-  return c.json(application, 201);
+  const applicationManager = DPI.get(TYPES.ApplicationManager);
+  const existing = await applicationManager.getByCandidateAndJob(candidateId, jobId);
+  if (existing) {
+    // Idempotent re-apply: return existing, do not re-enqueue.
+    return c.json(existing, 200);
+  }
+
+  try {
+    const application = await applicationManager.create({
+      job_id: jobId,
+      candidate_id: candidateId,
+      source: 'portal',
+    });
+
+    await DPI.get(TYPES.IndexingOrchestrator).enqueueLatestResumeForCandidate(candidateId, {
+      applicationId: application.application_id,
+      jobId,
+    });
+
+    return c.json(application, 201);
+  } catch (err) {
+    // Race: concurrent insert hit unique (candidate_id, job_id) → re-fetch → 200.
+    if (isUniqueViolation(err)) {
+      const raced = await applicationManager.getByCandidateAndJob(candidateId, jobId);
+      if (raced) {
+        return c.json(raced, 200);
+      }
+    }
+    throw err;
+  }
 }
 
 /**
@@ -62,13 +92,11 @@ export async function addRecruiterComment(c) {
     author,
     comment_text: parsed.data.comment_text,
   });
-  await DPI.get(TYPES.ProcessDocumentsQueue).enqueue({
-    event_type: INDEX_EVENT_TYPES.UPSERT,
-    doc_type: DOC_TYPES.RECRUITER_COMMENT,
-    source_id: comment.comment_id,
-    candidate_id: application.candidate_id,
-    application_id: application.application_id,
-    job_id: application.job_id,
+  await DPI.get(TYPES.IndexingOrchestrator).enqueueRecruiterComment({
+    commentId: comment.comment_id,
+    candidateId: application.candidate_id,
+    applicationId: application.application_id,
+    jobId: application.job_id,
   });
   return c.json(comment, 201);
 }

@@ -3,6 +3,7 @@ import { TYPES } from '../../core/types.js';
 import { generateToken } from '../../utils/auth.js';
 import { USER_ROLES } from '../../utils/constants.js';
 import { AuthError, ValidationError } from '../../utils/errors.js';
+import { toPublicCandidate, toPublicRecruiter } from '../../utils/publicDto.js';
 import { candidateRegisterSchema, loginSchema } from './validator.js';
 
 /**
@@ -22,7 +23,7 @@ export async function candidateRegister(c) {
     role: USER_ROLES.CANDIDATE,
     email: candidate.email,
   });
-  return c.json({ candidate, token });
+  return c.json({ candidate: toPublicCandidate(candidate), token });
 }
 
 /**
@@ -46,7 +47,7 @@ export async function candidateLogin(c) {
     role: USER_ROLES.CANDIDATE,
     email: candidate.email,
   });
-  return c.json({ candidate, token });
+  return c.json({ candidate: toPublicCandidate(candidate), token });
 }
 
 /**
@@ -72,5 +73,5 @@ export async function recruiterLogin(c) {
     role: recruiter.role,
     email: recruiter.email,
   });
-  return c.json({ recruiter, token });
+  return c.json({ recruiter: toPublicRecruiter(recruiter), token });
 }

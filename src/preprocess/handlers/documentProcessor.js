@@ -6,6 +6,8 @@ import { candidates } from '../../core/db/candidates/schema.js';
 import { interviewTranscripts } from '../../core/db/interview_transcripts/schema.js';
 import { oneWayTranscripts } from '../../core/db/one_way_transcripts/schema.js';
 import { recruiterComments } from '../../core/db/recruiter_comments/schema.js';
+import { screeningAnswers } from '../../core/db/screening_answers/schema.js';
+import { screeningQuestions } from '../../core/db/screening_questions/schema.js';
 import { skills } from '../../core/db/skills/schema.js';
 import { BaseService } from '../../core/services/base/BaseService.js';
 import { TYPES } from '../../core/types.js';
@@ -31,6 +33,18 @@ export class DocumentProcessor extends BaseService {
     await queueManager.markProcessing(event.id);
 
     try {
+      // DELETE: remove all points for this document before any text fetch
+      if (event.event_type === INDEX_EVENT_TYPES.DELETE) {
+        await this.dpi.get(TYPES.VectorDBManager).deleteByFilter({
+          must: [
+            { key: 'doc_type', match: { value: event.doc_type } },
+            { key: 'source_id', match: { value: event.source_id } },
+          ],
+        });
+        await queueManager.markCompleted(event.id);
+        return;
+      }
+
       const text = await this._fetchText(event);
       if (!text) {
         throw new Error(`No text found for doc_type=${event.doc_type} source=${event.source_id}`);
@@ -70,12 +84,14 @@ export class DocumentProcessor extends BaseService {
           skills: metadata.skills,
           notice_period_days: metadata.notice_period_days,
           current_location: metadata.current_location,
+          current_location_norm: metadata.current_location?.trim().toLowerCase() || null,
           total_experience_years: metadata.total_experience_years,
           expected_salary_lpa: metadata.expected_salary_lpa,
           can_join_immediately: metadata.can_join_immediately,
           preferred_work_type: metadata.preferred_work_type,
           current_title: metadata.current_title,
           current_company: metadata.current_company,
+          current_company_norm: metadata.current_company?.trim().toLowerCase() || null,
         };
         points.push({
           id: this._stablePointId(event.doc_type, event.source_id, i),
@@ -86,6 +102,17 @@ export class DocumentProcessor extends BaseService {
       }
 
       await this.dpi.get(TYPES.VectorDBManager).upsert(points);
+
+      // Purge orphan higher chunk_index points left from a previous larger document
+      const n = chunks.length;
+      await this.dpi.get(TYPES.VectorDBManager).deleteByFilter({
+        must: [
+          { key: 'doc_type', match: { value: event.doc_type } },
+          { key: 'source_id', match: { value: event.source_id } },
+          { key: 'chunk_index', range: { gt: n - 1 } },
+        ],
+      });
+
       await queueManager.markCompleted(event.id);
     } catch (err) {
       this.logger.error({ err, event }, 'Failed to process indexing event');
@@ -135,9 +162,27 @@ export class DocumentProcessor extends BaseService {
         .limit(1);
       return rows[0]?.comment_text || null;
     }
-    if (event.event_type === INDEX_EVENT_TYPES.DELETE) {
-      // For deletes we return empty text; deletion handled via upsert override.
-      return '';
+    if (event.doc_type === DOC_TYPES.SCREENING_ANSWER) {
+      const rows = await this.db
+        .select({
+          answer_text: screeningAnswers.answer_text,
+          question_text: screeningQuestions.question_text,
+        })
+        .from(screeningAnswers)
+        .leftJoin(
+          screeningQuestions,
+          eq(screeningAnswers.question_id, screeningQuestions.question_id)
+        )
+        .where(eq(screeningAnswers.answer_id, event.source_id))
+        .limit(1);
+      const row = rows[0];
+      if (!row?.answer_text) {
+        return null;
+      }
+      if (row.question_text) {
+        return `Question: ${row.question_text}\nAnswer: ${row.answer_text}`;
+      }
+      return row.answer_text;
     }
     return null;
   }

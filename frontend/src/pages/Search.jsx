@@ -54,9 +54,9 @@ export default function Search() {
                             <input
                                 type="number"
                                 min={1}
-                                max={50}
+                                max={20}
                                 value={topK}
-                                onChange={(e) => setTopK(Math.max(1, Math.min(50, Number(e.target.value) || 1)))}
+                                onChange={(e) => setTopK(Math.max(1, Math.min(20, Number(e.target.value) || 1)))}
                                 className="w-24 px-4 py-2 bg-elevated border border-border rounded-xl text-white focus:outline-none focus:border-accent-blue"
                             />
                         </div>
@@ -195,13 +195,13 @@ export default function Search() {
                                                 <span className="font-medium text-white">#{result.candidate_id}</span>
                                             </td>
                                             <td className="px-6 py-4">
-                                                <span className={`inline-flex px-2 py-1 rounded-md text-sm font-medium ${result.match_score >= 70
+                                                <span className={`inline-flex px-2 py-1 rounded-md text-sm font-medium ${result.match_score >= 0.7
                                                         ? 'bg-accent-green/10 text-accent-green'
-                                                        : result.match_score >= 50
+                                                        : result.match_score >= 0.5
                                                             ? 'bg-accent-orange/10 text-accent-orange'
                                                             : 'bg-slate-500/10 text-slate-400'
                                                     }`}>
-                                                    {result.match_score}
+                                                    {(result.match_score * 100).toFixed(0)}%
                                                 </span>
                                             </td>
                                             <td className="px-6 py-4">

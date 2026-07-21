@@ -9,7 +9,10 @@ import { jobs } from '../../core/db/jobs/schema.js';
 import { skills } from '../../core/db/skills/schema.js';
 import { TYPES } from '../../core/types.js';
 import { SEARCH_STRATEGIES } from '../../utils/constants.js';
+import { FilterBuilder } from '../filters/FilterBuilder.js';
+import { normalizeRelevance, normalizeStructured } from '../scoring/ScoreNormalizer.js';
 import { BaseAIService } from '../services/base/BaseAIService.js';
+import { rerankFetchLimit } from '../utils/fetchLimit.js';
 import { fetchDocText } from './helpers.js';
 
 /**
@@ -126,13 +129,15 @@ export class SearchHandler extends BaseAIService {
     logger.info({ filters, jobId }, 'StructuredSearch: starting');
 
     try {
-      const { clauses, needsSkillsJoin } = this._buildSqlClauses(filters, jobId);
+      const builder = FilterBuilder.fromExtraction(filters);
+      const { clauses, needsSkillsJoin } = builder.toSqlClauses(jobId);
+      // Heuristic window — do not unify with hybrid rerankFetchLimit
       const fetchLimit = Math.max(topK * 5, 50);
 
       const whereSql = this._combineClauses(clauses);
 
       logger.debug(
-        { clauseCount: clauses.length, needsSkillsJoin },
+        { clauseCount: clauses.length, needsSkillsJoin, fetchLimit },
         'StructuredSearch: built SQL clauses'
       );
 
@@ -164,6 +169,10 @@ export class SearchHandler extends BaseAIService {
             c.current_title,
             c.current_company,
             c.total_experience_years
+          ORDER BY
+            c.can_join_immediately DESC NULLS LAST,
+            c.notice_period_days ASC NULLS LAST,
+            overall_score DESC NULLS LAST
           LIMIT ${fetchLimit}
         `;
 
@@ -187,10 +196,10 @@ export class SearchHandler extends BaseAIService {
         return await this._rerankWithJobDescription(candidates, jobId, semanticQuery, topK);
       }
 
-      // Otherwise, use deterministic scoring
+      // Otherwise, use deterministic scoring (normalize 0–100 → 0–1)
       const scored = candidates.map((c) => ({
         candidate_id: c.candidate_id,
-        match_score: this._calculateStructuredScore(c),
+        match_score: normalizeStructured(this._calculateStructuredScore(c)),
         matched_on: 'structured_score',
         content: '',
       }));
@@ -200,81 +209,6 @@ export class SearchHandler extends BaseAIService {
       logger.error({ err }, 'StructuredSearch: failed');
       throw err;
     }
-  }
-
-  /**
-   * Builds SQL WHERE clauses from filters.
-   * @param {object} filters - Extracted filters.
-   * @param {number|null} jobId - Optional job ID.
-   * @returns {{clauses: Array, needsSkillsJoin: boolean}}
-   */
-  _buildSqlClauses(filters, jobId) {
-    const logger = this.logger;
-    logger.info({ filters, jobId }, 'StructuredSearch: building SQL clauses from filters');
-
-    const clauses = [];
-    let needsSkillsJoin = false;
-
-    if (filters.locations?.length) {
-      logger.info({ locations: filters.locations }, 'StructuredSearch: adding location filter');
-      // Case-insensitive location matching
-      clauses.push(
-        sql`LOWER(c.current_location) IN (${sql.join(
-          filters.locations.map((l) => sql`LOWER(${l})`),
-          sql`, `
-        )})`
-      );
-    }
-
-    if (typeof filters.notice_period_max === 'number') {
-      clauses.push(
-        sql`(COALESCE(c.notice_period_days, 9999) <= ${filters.notice_period_max} OR c.can_join_immediately = true)`
-      );
-    }
-
-    if (typeof filters.can_join_immediately === 'boolean' && filters.can_join_immediately) {
-      clauses.push(sql`c.can_join_immediately = true`);
-    }
-
-    if (typeof filters.experience_min === 'number') {
-      clauses.push(sql`c.total_experience_years >= ${filters.experience_min}`);
-    }
-
-    if (typeof filters.experience_max === 'number') {
-      clauses.push(sql`c.total_experience_years <= ${filters.experience_max}`);
-    }
-
-    if (typeof filters.expected_salary_min === 'number') {
-      clauses.push(sql`c.expected_salary_lpa >= ${filters.expected_salary_min}`);
-    }
-
-    if (typeof filters.expected_salary_max === 'number') {
-      clauses.push(sql`c.expected_salary_lpa <= ${filters.expected_salary_max}`);
-    }
-
-    if (filters.preferred_work_type) {
-      clauses.push(sql`c.preferred_work_type = ${filters.preferred_work_type}`);
-    }
-
-    if (filters.current_company) {
-      clauses.push(sql`c.current_company ILIKE ${`%${filters.current_company}%`}`);
-    }
-
-    if (filters.skills?.length) {
-      needsSkillsJoin = true;
-      clauses.push(
-        sql`s.skill_name IN (${sql.join(
-          filters.skills.map((s) => sql`${s}`),
-          sql`, `
-        )})`
-      );
-    }
-
-    if (jobId) {
-      clauses.push(sql`a.job_id = ${jobId}`);
-    }
-
-    return { clauses, needsSkillsJoin };
   }
 
   /**
@@ -329,36 +263,58 @@ export class SearchHandler extends BaseAIService {
 
       const resumeMap = await this._getLatestResumes(candidates.map((c) => c.candidate_id));
 
-      const docs = candidates
-        .map((c) => ({
-          id: String(c.candidate_id),
-          candidate_id: c.candidate_id,
-          content: resumeMap.get(c.candidate_id) || '',
-          metadata: { candidate_id: c.candidate_id },
-        }))
-        .filter((d) => d.content);
-
-      if (!docs.length) {
-        logger.warn('StructuredSearch: no resumes found for reranking');
-        return candidates.map((c) => ({
-          candidate_id: c.candidate_id,
-          match_score: this._calculateStructuredScore(c),
-          matched_on: 'structured_score',
-          content: '',
-        }));
+      const withResume = [];
+      const withoutResume = [];
+      for (const c of candidates) {
+        const content = resumeMap.get(c.candidate_id) || '';
+        if (content) {
+          withResume.push({
+            id: String(c.candidate_id),
+            candidate_id: c.candidate_id,
+            content,
+            metadata: { candidate_id: c.candidate_id },
+          });
+        } else {
+          withoutResume.push(c);
+        }
       }
 
-      const reranker = this.dpi.get(TYPES.RerankerService);
-      const reranked = await reranker.rerank(jobQuery, docs);
+      const results = [];
 
-      const results = reranked.map((r) => ({
-        candidate_id: Number(r.id),
-        match_score: r.score,
-        matched_on: 'resume_rerank',
-        content: r.content,
-      }));
+      if (withResume.length) {
+        const reranker = this.dpi.get(TYPES.RerankerService);
+        const reranked = await reranker.rerank(jobQuery, withResume);
+        for (const r of reranked) {
+          results.push({
+            candidate_id: Number(r.id),
+            match_score: normalizeRelevance(r.score),
+            matched_on: 'resume_rerank',
+            content: r.content,
+          });
+        }
+      } else {
+        logger.warn('StructuredSearch: no resumes found for reranking');
+      }
 
-      logger.info({ rerankedCount: results.length }, 'StructuredSearch: reranking complete');
+      // Keep no-resume applicants with structured normalized scores (never silent drop)
+      for (const c of withoutResume) {
+        results.push({
+          candidate_id: c.candidate_id,
+          match_score: normalizeStructured(this._calculateStructuredScore(c)),
+          matched_on: 'structured_score',
+          content: '',
+        });
+      }
+
+      logger.info(
+        {
+          withResume: withResume.length,
+          withoutResume: withoutResume.length,
+          resultCount: results.length,
+        },
+        'StructuredSearch: job rerank merge complete'
+      );
+
       return this._aggregateByCandidate(results, topK);
     } catch (err) {
       logger.error({ err }, 'StructuredSearch: reranking failed');
@@ -419,11 +375,16 @@ export class SearchHandler extends BaseAIService {
         sparseService.embed(semanticQuery),
       ]);
 
-      // Build Qdrant filter with optional job applicant filter
-      const qdrantFilter = await this._buildQdrantFilterWithJob(filters, jobId);
-      const fetchLimit = Math.max(topK * this.config.get('search.rerankFetchMultiplier'), 80);
+      const builder = FilterBuilder.fromExtraction(filters);
+      const candidateIds = await FilterBuilder.resolveCandidateIdRestriction(
+        this.db,
+        builder,
+        { jobId, logger }
+      );
+      const qdrantFilter = builder.toQdrantFilter({ candidateIds });
+      const fetchLimit = rerankFetchLimit(topK, this.config);
 
-      logger.warn({ qdrantFilter, fetchLimit }, 'HybridSearch: executing vector search');
+      logger.warn({ qdrantFilter, fetchLimit, candidateIds: candidateIds?.length }, 'HybridSearch: executing vector search');
 
       const hits = await vectorManager.hybridSearch({
         dense,
@@ -434,12 +395,8 @@ export class SearchHandler extends BaseAIService {
 
       logger.info({ hitCount: hits.length }, 'HybridSearch: vector search complete');
 
-      // Prepare docs with full payload for LLM reranking
-      const docs = hits.map((hit) => ({
-        id: String(hit.id),
-        content: hit.payload?.embedded_text || '',
-        metadata: hit.payload,
-      }));
+      // sourceWeights: max weighted hit per candidate → order docs before LLM
+      const docs = this._docsWeightedBySource(hits);
 
       // Use LLM reranker which returns candidates with explanations
       const llmReranker = this.dpi.get(TYPES.LLMReranker);
@@ -449,7 +406,7 @@ export class SearchHandler extends BaseAIService {
 
       return reranked.map((r) => ({
         candidate_id: r.candidate_id,
-        match_score: r.match_score,
+        match_score: normalizeRelevance(r.match_score),
         matched_on: 'hybrid',
         explanation: r.explanation,
         content: '',
@@ -458,102 +415,6 @@ export class SearchHandler extends BaseAIService {
       logger.error({ err }, 'HybridSearch: failed');
       throw err;
     }
-  }
-
-  /**
-   * Builds Qdrant payload filter from extracted filters.
-   * @param {object} filters - Extracted filters.
-   * @returns {object|null} Qdrant filter object.
-   */
-  _buildQdrantFilter(filters = {}) {
-    const must = [];
-
-    if (filters.skills?.length) {
-      must.push({ key: 'skills', match: { any: filters.skills } });
-    }
-
-    if (filters.locations?.length) {
-      must.push({ key: 'current_location', match: { any: filters.locations } });
-    }
-
-    if (typeof filters.notice_period_max === 'number') {
-      must.push({ key: 'notice_period_days', range: { lte: filters.notice_period_max } });
-    }
-
-    if (typeof filters.can_join_immediately === 'boolean') {
-      must.push({ key: 'can_join_immediately', match: { value: filters.can_join_immediately } });
-    }
-
-    if (typeof filters.experience_min === 'number') {
-      must.push({ key: 'total_experience_years', range: { gte: filters.experience_min } });
-    }
-
-    if (typeof filters.experience_max === 'number') {
-      must.push({ key: 'total_experience_years', range: { lte: filters.experience_max } });
-    }
-
-    if (typeof filters.expected_salary_min === 'number') {
-      must.push({ key: 'expected_salary_lpa', range: { gte: filters.expected_salary_min } });
-    }
-
-    if (typeof filters.expected_salary_max === 'number') {
-      must.push({ key: 'expected_salary_lpa', range: { lte: filters.expected_salary_max } });
-    }
-
-    if (filters.preferred_work_type) {
-      must.push({ key: 'preferred_work_type', match: { value: filters.preferred_work_type } });
-    }
-
-    if (filters.current_company) {
-      must.push({ key: 'current_company', match: { value: filters.current_company } });
-    }
-
-    return must.length ? { must } : null;
-  }
-
-  /**
-   * Builds Qdrant filter with optional job applicant restriction.
-   * @param {object} filters - Extracted filters.
-   * @param {number|null} jobId - Optional job ID to filter by applicants.
-   * @returns {Promise<object|null>} Qdrant filter object.
-   */
-  async _buildQdrantFilterWithJob(filters = {}, jobId = null) {
-    const baseFilter = this._buildQdrantFilter(filters);
-
-    if (!jobId) {
-      return baseFilter;
-    }
-
-    // Get candidate IDs who applied to this job
-    const candidateIds = await this._getCandidateIdsForJob(jobId);
-
-    if (!candidateIds.length) {
-      this.logger.warn({ jobId }, 'No candidates found for job, returning empty filter');
-      // Return a filter that matches nothing (candidate_id = -1 which won't exist)
-      return { must: [{ key: 'candidate_id', match: { value: -1 } }] };
-    }
-
-    this.logger.info({ jobId, candidateCount: candidateIds.length }, 'Filtering by job applicants');
-
-    const candidateFilter = { key: 'candidate_id', match: { any: candidateIds } };
-
-    if (baseFilter?.must?.length) {
-      return { must: [...baseFilter.must, candidateFilter] };
-    }
-
-    return { must: [candidateFilter] };
-  }
-
-  /**
-   * Fetches candidate IDs who applied to a specific job.
-   * @param {number} jobId - Job ID.
-   * @returns {Promise<number[]>} Array of candidate IDs.
-   */
-  async _getCandidateIdsForJob(jobId) {
-    const rows = await this.db.execute(
-      sql`SELECT DISTINCT candidate_id FROM ${jobApplications} WHERE job_id = ${jobId}`
-    );
-    return rows.map((r) => Number(r.candidate_id));
   }
 
   // ─────────────────────────────────────────────────────────────────────────────
@@ -583,13 +444,16 @@ export class SearchHandler extends BaseAIService {
         sparseService.embed(semanticQuery),
       ]);
 
-      const fetchLimit = Math.max(
-        topK * (this.config.get('search.rerankFetchMultiplier') || 3),
-        80
-      );
+      const fetchLimit = rerankFetchLimit(topK, this.config);
 
-      // Build filter from job applicants if jobId provided
-      const qdrantFilter = await this._buildQdrantFilterWithJob({}, jobId);
+      // Semantic: no attribute filters — only optional job applicant restriction
+      const builder = FilterBuilder.fromExtraction({});
+      const candidateIds = await FilterBuilder.resolveCandidateIdRestriction(
+        this.db,
+        builder,
+        { jobId, logger }
+      );
+      const qdrantFilter = builder.toQdrantFilter({ candidateIds });
 
       logger.debug({ fetchLimit, hasJobFilter: !!jobId }, 'SemanticSearch: executing vector search');
 
@@ -602,12 +466,8 @@ export class SearchHandler extends BaseAIService {
 
       logger.info({ hitCount: hits.length }, 'SemanticSearch: vector search complete');
 
-      // Prepare docs with full payload for LLM reranking
-      const docs = hits.map((hit) => ({
-        id: String(hit.id),
-        content: hit.payload?.embedded_text || '',
-        metadata: hit.payload,
-      }));
+      // sourceWeights: max weighted hit per candidate → order docs before LLM
+      const docs = this._docsWeightedBySource(hits);
 
       // Use LLM reranker which returns candidates with explanations
       const llmReranker = this.dpi.get(TYPES.LLMReranker);
@@ -617,7 +477,7 @@ export class SearchHandler extends BaseAIService {
 
       return reranked.map((r) => ({
         candidate_id: r.candidate_id,
-        match_score: r.match_score,
+        match_score: normalizeRelevance(r.match_score),
         matched_on: 'semantic',
         explanation: r.explanation,
         content: '',
@@ -626,6 +486,48 @@ export class SearchHandler extends BaseAIService {
       logger.error({ err }, 'SemanticSearch: failed');
       throw err;
     }
+  }
+
+  /**
+   * Apply sourceWeights: max weighted hit score per candidate, then order docs
+   * so higher-weighted candidates appear first for LLM / retrieval-order fallback.
+   * @param {Array} hits - Qdrant hits with score + payload.
+   * @returns {Array<{id:string, content:string, metadata:object, retrieval_score:number}>}
+   */
+  _docsWeightedBySource(hits = []) {
+    const weights = this.config.get('search.sourceWeights') || {};
+    const maxByCandidate = new Map();
+
+    for (const hit of hits) {
+      const cid = Number(hit.payload?.candidate_id);
+      if (!Number.isFinite(cid)) continue;
+      const docType = hit.payload?.doc_type;
+      const w = weights[docType] ?? 1;
+      const weighted = (Number(hit.score) || 0) * w;
+      const prev = maxByCandidate.get(cid);
+      if (prev == null || weighted > prev) {
+        maxByCandidate.set(cid, weighted);
+      }
+    }
+
+    const docs = hits.map((hit) => {
+      const cid = Number(hit.payload?.candidate_id);
+      return {
+        id: String(hit.id),
+        content: hit.payload?.embedded_text || '',
+        metadata: hit.payload,
+        retrieval_score: maxByCandidate.get(cid) ?? 0,
+      };
+    });
+
+    // Sort by candidate max weighted score desc; stable within same candidate
+    docs.sort((a, b) => {
+      const scoreDiff = (b.retrieval_score || 0) - (a.retrieval_score || 0);
+      if (scoreDiff !== 0) return scoreDiff;
+      return Number(a.metadata?.candidate_id) - Number(b.metadata?.candidate_id);
+    });
+
+    return docs;
   }
 
   // ─────────────────────────────────────────────────────────────────────────────
