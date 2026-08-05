@@ -1,4 +1,4 @@
-# Whitecarrot ATS Candidate Search System
+# ATS Candidate Search System
 
 A production-ready Applicant Tracking System (ATS) with natural language candidate search capabilities. Built with Bun, Hono, PostgreSQL, Qdrant, and BullMQ.
 
