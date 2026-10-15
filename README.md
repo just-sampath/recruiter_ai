@@ -584,9 +584,3 @@ Configuration is managed via `config/default.json` (override with `NODE_CONFIG_E
 5. For **Qdrant Cloud**, set `QDRANT_URL` + `QDRANT_API_KEY`; restrict API key scope if the provider supports it.
 6. Treat **import truncate** as production data loss for candidates/jobs **and** vectors (collection recreate is irreversible).
 7. Import is **superadmin-only**; do not expose the API without auth.
-
----
-
-## License
-
-Proprietary - Whitecarrot Technologies
