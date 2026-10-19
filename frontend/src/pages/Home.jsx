@@ -51,8 +51,8 @@ export default function Home() {
             <div className="relative z-10 min-h-screen flex flex-col items-center justify-center px-6">
                 {/* Logo */}
                 <div className="flex items-center gap-3 mb-12 animate-fade-in">
-                    <span className="text-4xl">🥕</span>
-                    <h1 className="text-3xl font-semibold tracking-tight">Whitecarrot</h1>
+                    <span className="text-4xl">🔎</span>
+                    <h1 className="text-3xl font-semibold tracking-tight">Recruiter AI</h1>
                 </div>
 
                 {/* Welcome text */}
@@ -87,7 +87,7 @@ export default function Home() {
 
                 {/* Footer */}
                 <p className="mt-16 text-slate-500 text-sm animate-fade-in" style={{ animationDelay: '500ms' }}>
-                    Whitecarrot Technologies
+                    Natural-language candidate search
                 </p>
             </div>
 

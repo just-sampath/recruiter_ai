@@ -54,7 +54,7 @@ export default function Login() {
                 {/* Login card */}
                 <div className="bg-card border border-border rounded-2xl p-8 shadow-2xl animate-slide-up">
                     <div className="flex items-center gap-3 mb-8">
-                        <span className="text-3xl">🥕</span>
+                        <span className="text-3xl">🔎</span>
                         <h1 className="text-2xl font-semibold">Admin Login</h1>
                     </div>
 

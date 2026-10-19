@@ -1,6 +1,8 @@
-# Questions - Expected Answers
+# Golden queries
 
-**NOTE:** THE EXPECTED ANSWERS BELOW ARE BASED ON THE CURRENT IMPLEMENTATION AND MAY CHANGE WITH FUTURE UPDATES. THERE MIGHT BE MULTIPLE VALID ANSWERS FOR A GIVEN QUESTION, THIS IS JUST ONE POSSIBLE SET.
+A hand-built set of natural-language queries with the candidate IDs I expect back, grouped by search tier. I use it to sanity-check ranking changes against the sample data.
+
+> The expected IDs reflect the current implementation and may shift as ranking changes. Some queries have more than one valid answer; each list is one acceptable set.
 
 ## Level 0: Structured Search
 

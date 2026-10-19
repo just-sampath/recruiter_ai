@@ -66,8 +66,8 @@ export default function AdminLayout() {
                 {/* Logo */}
                 <div className="p-6 border-b border-border">
                     <a href="/" className="flex items-center gap-3">
-                        <span className="text-2xl">🥕</span>
-                        <span className="text-xl font-semibold text-white">Whitecarrot</span>
+                        <span className="text-2xl">🔎</span>
+                        <span className="text-xl font-semibold text-white">Recruiter AI</span>
                     </a>
                 </div>
 
